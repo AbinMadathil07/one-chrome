@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MCP Playground</title>
+    <style>
+      body { font-family: sans-serif; margin: 24px; }
+      #menu { display: none; }
+      #hover-target:hover + #menu, #menu:hover { display: block; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>MCP Playground</h1>
+    <form id="signup" onsubmit="event.preventDefault(); submitForm();">
+      <label>Email <input id="email" name="email" type="email" /></label>
+      <label>Password <input id="password" type="password" /></label>
+      <label>Country
+        <select id="country">
+          <option value="">Choose…</option>
+          <option value="in">India</option>
+          <option value="us">United States</option>
+        </select>
+      </label>
+      <label><input id="terms" type="checkbox" /> Accept terms</label>
+      <button type="submit">Create account</button>
+    </form>
+    <p id="result" aria-live="polite"></p>
+    <button id="alert-btn" onclick="document.getElementById('dialog-result').textContent = confirm('Delete everything?') ? 'confirmed' : 'cancelled'">Danger zone</button>
+    <p id="dialog-result"></p>
+    <button id="hover-target">Account</button>
+    <div id="menu" role="menu"><a role="menuitem" href="#profile">Profile</a></div>
+    <button id="late-btn" class="hidden">Appeared later</button>
+    <p>
+      <a id="popup-link" href="/popup" target="_blank">Open pricing</a>
+      <a id="download-link" href="/download.csv">Download price list</a>
+    </p>
+    <label>Attachment <input id="file" type="file" multiple /></label>
+    <p id="file-result"></p>
+    <div id="pad" style="width: 240px; height: 80px; background: #ddd">Pointer pad</div>
+    <p id="pad-log"></p>
+    <textarea id="notes" aria-label="Notes"></textarea>
+    <p id="key-log"></p>
+    <main>
+      <article>
+        <h2>Getting started</h2>
+        <p>
+          Install the bridge extension, start the host, and connect your MCP client. Each model gets its own
+          session, its own tab group, and its own leases, so several agents can browse at the same time without
+          clobbering each other. This paragraph is long enough to count as the main article content.
+        </p>
+      </article>
+    </main>
+    <div style="height: 2400px"></div>
+    <button id="far-btn">Far away button</button>
+    <script>
+      const padLog = [];
+      const pad = document.getElementById('pad');
+      const logPad = (entry) => {
+        padLog.push(entry);
+        document.getElementById('pad-log').textContent = padLog.join(' ');
+      };
+      pad.addEventListener('mousedown', (e) => logPad(`down:${e.button}:${e.shiftKey ? 'shift' : ''}`));
+      pad.addEventListener('mouseup', (e) => logPad(`up:${e.button}`));
+      pad.addEventListener('click', (e) => logPad(`click:${e.detail}`));
+      pad.addEventListener('auxclick', (e) => logPad(`aux:${e.button}`));
+      pad.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        logPad('context');
+      });
+      const keyDownAt = {};
+      const keyLog = [];
+      document.addEventListener('keydown', (e) => {
+        keyDownAt[e.key] = performance.now();
+      });
+      document.addEventListener('keyup', (e) => {
+        const held = Math.round(performance.now() - (keyDownAt[e.key] ?? performance.now()));
+        keyLog.push(`${e.key}:${held}`);
+        document.getElementById('key-log').textContent = keyLog.join(' ');
+      });
+      document.getElementById('file').addEventListener('change', (e) => {
+        document.getElementById('file-result').textContent = [...e.target.files].map((f) => f.name).join(',');
+      });
+    </script>
+    <script>
+      async function submitForm() {
+        const payload = {
+          email: document.getElementById('email').value,
+          country: document.getElementById('country').value,
+          terms: document.getElementById('terms').checked,
+        };
+        console.log('submitting', payload.email);
+        try {
+          await fetch('/api/signup?email=' + encodeURIComponent(payload.email));
+        } catch (error) {
+          console.error('fetch failed', error.message);
+        }
+        document.getElementById('result').textContent = `Created ${payload.email} (${payload.country}) terms=${payload.terms}`;
+      }
+      console.warn('playground loaded');
+      setTimeout(() => document.getElementById('late-btn').classList.remove('hidden'), 800);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chrome MCP Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Chrome MCP Bridge</h1>
+      <p id="status" class="status disconnected">Disconnected</p>
+
+      <label>
+        Bridge URL
+        <input id="bridgeUrl" type="text" spellcheck="false" />
+      </label>
+
+      <label>
+        Token (optional)
+        <input id="token" type="password" autocomplete="off" />
+      </label>
+
+      <div class="row">
+        <button id="connect" type="button">Connect</button>
+        <button id="disconnect" type="button" class="secondary">Disconnect</button>
+      </div>
+
+      <p class="hint">
+        The host starts when an MCP client connects. Connect here once; it reconnects
+        on its own after that.
+      </p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

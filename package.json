@@ -1,0 +1,39 @@
+{
+  "name": "one-chrome",
+  "version": "2.2.0",
+  "description": "One real Chrome for every AI model. Shared MCP host with per-model tabs, leases, and Claude's browser toolset.",
+  "license": "MIT",
+  "author": "Abin Madathil",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AbinMadathil07/one-chrome.git"
+  },
+  "type": "module",
+  "bin": {
+    "one-chrome": "./dist/cli.js",
+    "chrome-mcp": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/cli.ts serve",
+    "start": "node dist/cli.js serve",
+    "test": "tsx --test test/**/*.test.ts",
+    "smoke": "node scripts/smoke.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
