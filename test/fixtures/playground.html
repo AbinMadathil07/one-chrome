@@ -98,6 +98,7 @@
         document.getElementById('result').textContent = `Created ${payload.email} (${payload.country}) terms=${payload.terms}`;
       }
       console.warn('playground loaded');
+      console.error('playground boom');
       setTimeout(() => document.getElementById('late-btn').classList.remove('hidden'), 800);
     </script>
   </body>

@@ -222,25 +222,35 @@ export const TAB_ACTIONS = {
   console_messages: action({
     command: 'console_messages',
     exclusive: false,
-    description: 'Console logs, warnings, errors, and uncaught exceptions since the last navigation.',
+    description:
+      'DevTools console for this tab since the last navigation: logs, warnings, errors, uncaught exceptions (with stacks), and audit issues such as CSP, CORS, mixed content, and cookies. Filter types to ["error","issue"] for failures only.',
     args: {
-      types: z.array(z.string()).optional().describe('e.g. ["error","warn"]'),
-      includePreserved: z.boolean().optional().describe('Include the previous 3 navigations'),
-      includeStackTraces: z.boolean().optional(),
+      types: z.array(z.string()).optional().describe('e.g. ["error","warn","issue"]'),
+      includePreservedMessages: z.boolean().optional().describe('Include the previous 3 navigations'),
+      includePreserved: z.boolean().optional().describe('Alias of includePreservedMessages'),
+      includeStackTraces: z.boolean().optional().describe('Errors and issues always include stacks'),
       pageSize: z.number().int().positive().optional(),
       pageIdx: z.number().int().min(0).optional(),
       clear: z.boolean().optional(),
     },
   }),
+  get_console_message: action({
+    command: 'get_console_message',
+    exclusive: false,
+    description: 'One console message by msgid from chrome_console_messages, including its stack and source location.',
+    args: { msgid: z.number().int().positive() },
+  }),
   network_requests: action({
     command: 'network_requests',
     exclusive: false,
-    description: 'Network requests since the last navigation with status, type, timing, and size.',
+    description:
+      'DevTools network log since the last navigation: method, URL, status, type, size, total time, time to first byte, protocol, and initiator. Use chrome_get_network_request for headers and bodies.',
     args: {
-      resourceTypes: z.array(z.string()).optional().describe('e.g. ["XHR","Fetch","Document"]'),
+      resourceTypes: z.array(z.string()).optional().describe('e.g. ["XHR","Fetch","Document","Script","Stylesheet","Image"]'),
       urlContains: z.string().optional(),
       failedOnly: z.boolean().optional().describe('Only failed or 4xx/5xx requests'),
-      includePreserved: z.boolean().optional(),
+      includePreservedRequests: z.boolean().optional().describe('Include the previous 3 navigations'),
+      includePreserved: z.boolean().optional().describe('Alias of includePreservedRequests'),
       pageSize: z.number().int().positive().optional(),
       pageIdx: z.number().int().min(0).optional(),
     },
@@ -248,7 +258,7 @@ export const TAB_ACTIONS = {
   get_network_request: action({
     command: 'get_network_request',
     exclusive: false,
-    description: 'Full detail for one request (headers, post data, response body).',
+    description: 'One network request by reqid: request and response headers, post data, timing, initiator, and response body.',
     args: {
       reqid: z.number().int().positive(),
       includeBody: z.boolean().optional(),
@@ -291,7 +301,27 @@ export const TAB_ACTIONS = {
   performance_metrics: action({
     command: 'performance_metrics',
     exclusive: false,
-    description: 'Core Web Vitals (TTFB, FCP, LCP, CLS) plus JS heap, DOM nodes, layout and script time.',
+    description: 'A snapshot of the page already loaded: TTFB, FCP, LCP, CLS, JS heap, DOM nodes, and layout time. For a recorded profile, use chrome_performance_start_trace.',
+    args: {},
+  }),
+  performance_start_trace: action({
+    command: 'performance_start_trace',
+    exclusive: true,
+    batchable: false,
+    description:
+      'Record a DevTools performance trace to find why a page is slow. By default it reloads the page and returns LCP, FCP, CLS, long tasks, and the slowest scripts. Set autoStop false to keep recording while you interact, then call chrome_performance_stop_trace.',
+    args: {
+      reload: z.boolean().optional().describe('Reload the page once tracing has started (default true). Navigate first.'),
+      autoStop: z.boolean().optional().describe('Stop automatically and return the summary (default true)'),
+      settleMs: z.number().int().min(0).max(15_000).optional().describe('How long to record after load before auto-stop. Default 5000'),
+      ignoreCache: z.boolean().optional().describe('Bypass the HTTP cache while reloading, for a cold load'),
+    },
+  }),
+  performance_stop_trace: action({
+    command: 'performance_stop_trace',
+    exclusive: true,
+    batchable: false,
+    description: 'Stop the performance trace started with autoStop false and return LCP, CLS, interactions, long tasks, and script cost.',
     args: {},
   }),
   devtools_attach: action({

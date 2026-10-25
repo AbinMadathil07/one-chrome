@@ -1,10 +1,73 @@
 import { parseKeyCombo } from './keys.js';
+import { summarizeTrace } from './trace-summary.js';
 
 const PROTOCOL_VERSION = '1.3';
 const MAX_CONSOLE = 1000;
 const MAX_NETWORK = 1000;
 const MAX_POST_DATA = 4000;
 const PRESERVED_NAVIGATIONS = 3;
+const MAX_TRACE_EVENTS = 250_000;
+const TRACE_CATEGORIES = [
+  '-*',
+  'devtools.timeline',
+  'v8.execute',
+  'disabled-by-default-devtools.timeline',
+  'disabled-by-default-devtools.timeline.frame',
+  'toplevel',
+  'blink.console',
+  'blink.user_timing',
+  'latencyInfo',
+  'disabled-by-default-devtools.timeline.stack',
+  'disabled-by-default-v8.cpu_profiler',
+].join(',');
+
+function timingBreakdown(timing) {
+  if (!timing) return undefined;
+  const span = (end, start) => (end >= 0 && start >= 0 ? Math.round((end - start) * 1000) : undefined);
+  return {
+    dnsMs: span(timing.dnsEnd, timing.dnsStart),
+    connectMs: span(timing.connectEnd, timing.connectStart),
+    sslMs: span(timing.sslEnd, timing.sslStart),
+    ttfbMs: timing.receiveHeadersEnd >= 0 ? Math.round(timing.receiveHeadersEnd * 1000) : undefined,
+  };
+}
+
+function initiatorOf(initiator) {
+  if (!initiator) return undefined;
+  const frame = initiator.stack?.callFrames?.[0];
+  return {
+    type: initiator.type,
+    url: initiator.url || frame?.url,
+    line: (initiator.lineNumber ?? frame?.lineNumber) != null ? (initiator.lineNumber ?? frame.lineNumber) + 1 : undefined,
+  };
+}
+
+function locationOf(stackTrace, fallbackUrl) {
+  const frame = stackTrace?.callFrames?.[0];
+  if (!frame && !fallbackUrl) return {};
+  return {
+    url: frame?.url || fallbackUrl,
+    line: frame ? frame.lineNumber + 1 : undefined,
+    column: frame ? frame.columnNumber + 1 : undefined,
+  };
+}
+
+function summarizeIssue(issue) {
+  const code = issue?.code || 'Issue';
+  const details = issue?.details || {};
+  const cookie = details.cookieIssueDetails;
+  const csp = details.contentSecurityPolicyIssueDetails;
+  const mixed = details.mixedContentIssueDetails;
+  const cors = details.corsIssueDetails;
+  const deprecation = details.deprecationIssueDetails;
+  let text = code;
+  if (cookie) text = `Cookie ${cookie.cookieWarningReason || cookie.cookieExclusionReason || ''} ${cookie.cookie?.name || ''}`.replace(/\s+/g, ' ').trim();
+  else if (csp) text = `Content security policy blocked ${csp.blockedURL || csp.violatedDirective || ''}`.trim();
+  else if (mixed) text = `Mixed content ${mixed.insecureURL || mixed.request?.url || ''}`.trim();
+  else if (cors) text = `CORS ${cors.corsErrorStatus?.corsError || ''} ${cors.request?.url || cors.initiatorOrigin || ''}`.replace(/\s+/g, ' ').trim();
+  else if (deprecation) text = deprecation.message || 'Deprecated API';
+  return String(text).slice(0, 500);
+}
 
 const NETWORK_PRESETS = {
   Offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
@@ -131,6 +194,7 @@ export class DevtoolsManager {
           this.send(tabId, 'Page.enable'),
           this.send(tabId, 'Log.enable'),
           this.send(tabId, 'Network.enable', { maxPostDataSize: MAX_POST_DATA }),
+          this.send(tabId, 'Audits.enable').catch(() => undefined),
         ]);
         // Lets background tabs behave as focused so several models can work in parallel tabs.
         await this.send(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => undefined);
@@ -199,6 +263,7 @@ export class DevtoolsManager {
           text: (params.args || []).map(previewRemoteObject).join(' '),
           stack: formatStack(params.stackTrace),
           source: 'console',
+          ...locationOf(params.stackTrace),
         });
         break;
       case 'Runtime.exceptionThrown': {
@@ -208,7 +273,8 @@ export class DevtoolsManager {
           text: details.exception?.description || details.text || 'Uncaught exception',
           stack: formatStack(details.stackTrace),
           source: 'exception',
-          url: details.url,
+          ...locationOf(details.stackTrace, details.url),
+          line: details.lineNumber != null ? details.lineNumber + 1 : locationOf(details.stackTrace, details.url).line,
         });
         break;
       }
@@ -218,7 +284,29 @@ export class DevtoolsManager {
           text: params.entry?.text || '',
           source: params.entry?.source || 'log',
           url: params.entry?.url,
+          line: params.entry?.lineNumber != null ? params.entry.lineNumber + 1 : undefined,
         });
+        break;
+      case 'Audits.issueAdded':
+        this.pushConsole(state, {
+          type: 'issue',
+          text: summarizeIssue(params.issue),
+          code: params.issue?.code,
+          source: 'audit',
+        });
+        break;
+      case 'Tracing.dataCollected':
+        if (state.tracing) {
+          state.traceEvents.push(...(params.value || []));
+          if (state.traceEvents.length > MAX_TRACE_EVENTS) {
+            state.traceTruncated = true;
+            state.traceEvents.splice(0, state.traceEvents.length - MAX_TRACE_EVENTS);
+          }
+        }
+        break;
+      case 'Tracing.tracingComplete':
+        state.traceDone?.();
+        state.traceDone = null;
         break;
       case 'Network.requestWillBeSent':
         this.onRequest(state, params);
@@ -233,7 +321,10 @@ export class DevtoolsManager {
             mimeType: r.mimeType,
             responseHeaders: r.headers,
             protocol: r.protocol,
+            remoteIP: r.remoteIPAddress,
             fromCache: Boolean(r.fromDiskCache || r.fromServiceWorker || r.fromPrefetchCache),
+            fromServiceWorker: Boolean(r.fromServiceWorker),
+            timing: timingBreakdown(r.timing),
             resourceType: params.type || entry.resourceType,
           });
         }
@@ -297,6 +388,7 @@ export class DevtoolsManager {
       requestHeaders: request.headers,
       postData: request.postData ? String(request.postData).slice(0, MAX_POST_DATA) : undefined,
       hasPostData: Boolean(request.hasPostData),
+      initiator: initiatorOf(params.initiator),
       startTimestamp: params.timestamp,
       wallTime: params.wallTime ? Math.round(params.wallTime * 1000) : Date.now(),
       status: undefined,
@@ -325,13 +417,26 @@ export class DevtoolsManager {
     const state = await this.ensure(tabId);
     const types = options.types?.length ? new Set(options.types) : null;
     const afterId = Number(options.afterId);
+    const preserved = options.includePreserved || options.includePreservedMessages;
     const items = state.console
-      .filter(Number.isFinite(afterId) ? (m) => m.msgid > afterId : this.navFilter(state, options.includePreserved))
+      .filter(Number.isFinite(afterId) ? (m) => m.msgid > afterId : this.navFilter(state, preserved))
       .filter((m) => !types || types.has(m.type))
-      .map(({ stack, ...rest }) => (options.includeStackTraces ? { ...rest, stack } : rest));
+      .map(({ stack, ...rest }) => (
+        options.includeStackTraces || rest.type === 'error' || rest.type === 'issue' ? { ...rest, stack } : rest
+      ));
     const page = paginate(items, options.pageSize, options.pageIdx);
     if (options.clear) state.console = [];
-    return { ...page, attachedSinceNavigation: state.nav, lastId: state.consoleSeq };
+    const errors = items.filter((m) => m.type === 'error' || m.type === 'issue').length;
+    return { ...page, errors, attachedSinceNavigation: state.nav, lastId: state.consoleSeq };
+  }
+
+  async consoleMessage(tabId, msgid) {
+    const state = await this.ensure(tabId);
+    const message = state.console.find((entry) => entry.msgid === Number(msgid));
+    if (!message) {
+      throw new Error(`No console message ${msgid}. Call chrome_console_messages to list current ids.`);
+    }
+    return message;
   }
 
   async networkRequests(tabId, options = {}) {
@@ -339,10 +444,11 @@ export class DevtoolsManager {
     const types = options.resourceTypes?.length ? new Set(options.resourceTypes) : null;
     const needle = options.urlContains ? String(options.urlContains).toLowerCase() : null;
     const afterId = Number(options.afterId);
+    const preserved = options.includePreserved || options.includePreservedRequests;
     const items = state.networkOrder
       .map((id) => state.network.get(id))
       .filter(Boolean)
-      .filter(Number.isFinite(afterId) ? (r) => r.reqid > afterId : this.navFilter(state, options.includePreserved))
+      .filter(Number.isFinite(afterId) ? (r) => r.reqid > afterId : this.navFilter(state, preserved))
       .filter((r) => !types || types.has(r.resourceType))
       .filter((r) => !needle || r.url.toLowerCase().includes(needle))
       .filter((r) => !options.failedOnly || r.failed || (r.status ?? 0) >= 400)
@@ -354,8 +460,11 @@ export class DevtoolsManager {
         status: r.failed ? `failed: ${r.errorText}` : r.status ?? 'pending',
         mimeType: r.mimeType,
         durationMs: r.durationMs,
+        ttfbMs: r.timing?.ttfbMs,
         size: r.encodedDataLength,
+        protocol: r.protocol,
         fromCache: r.fromCache || undefined,
+        initiator: r.initiator,
         done: r.finished || r.failed,
       }));
     return paginate(items, options.pageSize, options.pageIdx);
@@ -371,12 +480,21 @@ export class DevtoolsManager {
     delete detail.startTimestamp;
     if (options.includeBody !== false && entry.finished && !entry.failed) {
       const maxChars = Number(options.maxBodyChars) || 50_000;
-      try {
-        const body = await this.send(tabId, 'Network.getResponseBody', { requestId: entry.requestId });
-        const text = body.base64Encoded ? `[base64 ${body.body.length} chars]` : body.body;
-        detail.responseBody = text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
-      } catch (error) {
-        detail.responseBody = `unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      let bodyError;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const body = await this.send(tabId, 'Network.getResponseBody', { requestId: entry.requestId });
+          const text = body.base64Encoded ? `[base64 ${body.body.length} chars]` : body.body;
+          detail.responseBody = text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+          bodyError = undefined;
+          break;
+        } catch (error) {
+          bodyError = error;
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+      }
+      if (bodyError) {
+        detail.responseBody = `unavailable: ${bodyError instanceof Error ? bodyError.message : String(bodyError)}`;
       }
     }
     if (entry.hasPostData && !entry.postData) {
@@ -722,6 +840,55 @@ export class DevtoolsManager {
       applied.geolocation = options.geolocation;
     }
     return { applied };
+  }
+
+  isTracing(tabId) {
+    return Boolean(this.tabs.get(tabId)?.tracing);
+  }
+
+  /** Begins a DevTools performance trace on this tab. Call stopTrace to summarize it. */
+  async startTrace(tabId) {
+    const state = await this.ensure(tabId);
+    if (state.tracing) {
+      throw new Error('A performance trace is already running on this tab. Call chrome_performance_stop_trace first.');
+    }
+    state.traceEvents = [];
+    state.traceTruncated = false;
+    state.tracing = true;
+    try {
+      await this.send(tabId, 'Tracing.start', {
+        categories: TRACE_CATEGORIES,
+        transferMode: 'ReportEvents',
+        options: 'sampling-frequency=10000',
+      });
+    } catch (error) {
+      state.tracing = false;
+      throw error;
+    }
+    return { started: true };
+  }
+
+  async stopTrace(tabId) {
+    const state = this.tabs.get(tabId);
+    if (!state?.tracing) {
+      throw new Error('No performance trace is running. Call chrome_performance_start_trace first.');
+    }
+    const done = new Promise((resolve) => {
+      state.traceDone = resolve;
+    });
+    try {
+      await this.send(tabId, 'Tracing.end');
+      await withTimeout(done, 20_000, 'The performance trace did not finish');
+    } finally {
+      state.tracing = false;
+      state.traceDone = null;
+    }
+    const summary = summarizeTrace(state.traceEvents || []);
+    const truncated = state.traceTruncated;
+    state.traceEvents = [];
+    return truncated
+      ? { ...summary, truncated: true, report: `${summary.report}\n\nThe trace was capped at ${MAX_TRACE_EVENTS.toLocaleString('en-US')} events.` }
+      : summary;
   }
 
   async performanceMetrics(tabId) {
