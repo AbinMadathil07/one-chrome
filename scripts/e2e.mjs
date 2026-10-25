@@ -380,8 +380,15 @@ async function run() {
     console.log('Console + network');
     const consoleA = json(await tool(a, 'chrome_console_messages', { sessionId: sa }));
     check('console captured log + warn', consoleA.items.some((m) => m.text.includes('submitting a@example.com')) && consoleA.items.some((m) => m.type === 'warning' || m.type === 'warn'), JSON.stringify(consoleA.items));
+    const boom = consoleA.items.find((m) => m.type === 'error' && m.text.includes('playground boom'));
+    check('console errors include a message id', Boolean(boom?.msgid), JSON.stringify(boom));
+    if (boom) {
+      const detail = json(await tool(a, 'chrome_get_console_message', { sessionId: sa, msgid: boom.msgid }));
+      check('console message detail keeps the error text', detail.text.includes('playground boom'), detail.text);
+    }
     const net = json(await tool(a, 'chrome_network_requests', { sessionId: sa, urlContains: '/api/signup' }));
     check('network captured API call with 201', net.items[0]?.status === 201, JSON.stringify(net.items));
+    check('network request includes timing or duration', net.items[0]?.durationMs != null || net.items[0]?.ttfbMs != null, JSON.stringify(net.items[0]));
     if (net.items[0]) {
       const detail = json(await tool(a, 'chrome_get_network_request', { sessionId: sa, reqid: net.items[0].reqid }));
       check('response body available', detail.responseBody === '{"ok":true}', detail.responseBody);
@@ -430,6 +437,12 @@ async function run() {
     );
     const perf = json(await tool(a, 'chrome_performance_metrics', { sessionId: sa }));
     check('performance metrics returned', typeof perf.runtime?.nodes === 'number' && perf.vitals?.url?.startsWith(fixture.url), JSON.stringify(perf));
+    const trace = json(await tool(a, 'chrome_performance_start_trace', { sessionId: sa, reload: true, autoStop: true, settleMs: 800 }));
+    check(
+      'performance trace reports load findings',
+      trace.eventCount > 10 && typeof trace.report === 'string' && /LCP|FCP|Load/.test(trace.report),
+      trace.report?.slice(0, 400) || JSON.stringify(trace).slice(0, 400),
+    );
     const shot = await tool(b, 'chrome_screenshot', { sessionId: sb, fullPage: true, format: 'jpeg', quality: 50 });
     check('full-page screenshot of background tab', shot.content.some((c) => c.type === 'image' && c.data.length > 1000));
     const elementShot = await tool(a, 'chrome_screenshot', { sessionId: sa, target: 'h1' });

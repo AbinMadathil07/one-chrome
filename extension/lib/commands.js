@@ -361,6 +361,43 @@ async function pageFetch(tabId, args) {
   return injection?.result;
 }
 
+async function tracePerformance(tabId, args) {
+  const reload = args.reload !== false;
+  const autoStop = args.autoStop !== false;
+  const settleMs = Math.min(Math.max(Number(args.settleMs ?? 5000), 0), 15_000);
+  let url;
+  if (reload) {
+    const tab = await chrome.tabs.get(tabId);
+    url = tab.url || tab.pendingUrl;
+    if (!url || url === 'about:blank') {
+      throw new Error('Navigate to the page you want to profile before starting a trace.');
+    }
+    await chrome.tabs.update(tabId, { url: 'about:blank' });
+    await waitForComplete(tabId, 10_000);
+  }
+  await devtools.startTrace(tabId);
+  try {
+    if (reload) {
+      if (args.ignoreCache) await devtools.send(tabId, 'Network.setCacheDisabled', { cacheDisabled: true });
+      try {
+        await navigateTab(tabId, url);
+      } finally {
+        if (args.ignoreCache) {
+          await devtools.send(tabId, 'Network.setCacheDisabled', { cacheDisabled: false }).catch(() => undefined);
+        }
+      }
+    }
+    if (!autoStop) {
+      return { recording: true, note: 'The performance trace is recording. Call chrome_performance_stop_trace to stop it.' };
+    }
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    return devtools.stopTrace(tabId);
+  } catch (error) {
+    if (devtools.isTracing(tabId)) await devtools.stopTrace(tabId).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function getPage(tabId) {
   const tab = toSnapshot(await chrome.tabs.get(tabId));
   const dialog = devtools.dialog(tabId);
@@ -441,9 +478,18 @@ const handlers = {
     const selector = await helper(tabId, 'refSelector', args.target);
     return devtools.uploadFiles(tabId, selector, args.paths || []);
   },
-  console_messages: async (tabId, args) => devtools.consoleMessages(tabId, args),
-  network_requests: async (tabId, args) => devtools.networkRequests(tabId, args),
+  console_messages: async (tabId, args) => devtools.consoleMessages(tabId, {
+    ...args,
+    includePreserved: args.includePreserved || args.includePreservedMessages,
+  }),
+  get_console_message: async (tabId, args) => devtools.consoleMessage(tabId, args.msgid),
+  network_requests: async (tabId, args) => devtools.networkRequests(tabId, {
+    ...args,
+    includePreserved: args.includePreserved || args.includePreservedRequests,
+  }),
   get_network_request: async (tabId, args) => devtools.networkRequest(tabId, args.reqid, args),
+  performance_start_trace: async (tabId, args) => tracePerformance(tabId, args),
+  performance_stop_trace: async (tabId) => devtools.stopTrace(tabId),
   handle_dialog: async (tabId, args) => devtools.handleDialog(tabId, args.accept, args.promptText),
   emulate: async (tabId, args) => devtools.emulate(tabId, args),
   performance_metrics: async (tabId) => devtools.performanceMetrics(tabId),

@@ -145,7 +145,7 @@ ANTHROPIC_API_KEY=sk-ant-... node examples/claude-browser-agent.mjs "Open exampl
 | Reading | `chrome_snapshot` (refs like `e12`), `chrome_find`, `chrome_get_page`, `chrome_get_text`, `chrome_get_html`, `chrome_screenshot` (element, full page, background tabs) |
 | Input | `chrome_click` (button, click count, modifiers, or x/y), `chrome_hover`, `chrome_fill`, `chrome_fill_form`, `chrome_type`, `chrome_press_key`, `chrome_select_option`, `chrome_scroll`, `chrome_drag`, `chrome_upload_file` |
 | Scripting | `chrome_evaluate` (expression, function, or top-level await), `chrome_fetch` (uses the page's cookies), `chrome_wait_for` |
-| DevTools | `chrome_console_messages`, `chrome_network_requests`, `chrome_get_network_request`, `chrome_handle_dialog`, `chrome_emulate` (viewport, color scheme, user agent, network, CPU, geolocation), `chrome_performance_metrics` |
+| DevTools | `chrome_console_messages` and `chrome_get_console_message` (errors, stacks, CSP/CORS/cookie issues), `chrome_network_requests` and `chrome_get_network_request` (timing, initiator, headers, body), `chrome_performance_start_trace` / `chrome_performance_stop_trace` (LCP, CLS, long tasks, script cost), `chrome_performance_metrics`, `chrome_handle_dialog`, `chrome_emulate` |
 | Batching | `chrome_batch`, up to 25 steps under one exclusive lease |
 
 Pass `includeSnapshot: true` on a mutating tool to get the page's interactive elements back with the result. If an action opens a JavaScript dialog, the call returns `{ modal }` instead of hanging, and other commands wait until `chrome_handle_dialog`.
